@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.venv/
+venv/
+env/
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+
+# Project-specific
+backend/app/data/raw/*.html
+backend/app/data/embeddings.npz
+backend/app/data/chroma/
+
+# Logs and temp
+*.log
+*.tmp
+tests/output/
+
+# Node
+node_modules/

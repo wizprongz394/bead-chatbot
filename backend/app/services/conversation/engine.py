@@ -1,4 +1,5 @@
 """Main conversation turn handler. Orchestrates intent, constraints, questions, retrieval."""
+import logging
 import re
 
 from app.services.conversation.state import get_or_create, save
@@ -8,6 +9,8 @@ from app.services.conversation.questions import select_next_question, summary
 from app.services.retrieval.vector_store import search as vsearch, rerank
 from app.services.retrieval.product_search import search_products, _load_products
 from app.services.retrieval.answer import compose_qa_answer, compose_refusal
+
+logger = logging.getLogger(__name__)
 
 
 COMPARE_FIELDS = [
@@ -57,16 +60,7 @@ def _find_product(item_number):
 
 
 def _relaxed_search(problem, limit=5):
-    """
-    Try progressively looser searches by dropping constraints one at a time.
-    Used when the full search returns 0 results. Returns products if any
-    relaxed search yields results, else empty list.
-    """
     import copy
-
-    # Order in which constraints are dropped (least important first).
-    # Never drop material, item_number, or dimension constraints - those
-    # are usually what the user actually cares about.
     drop_order = ["application", "product_family", "mounting", "end_type", "pin_type"]
 
     def try_search(drop_fields):
@@ -76,19 +70,14 @@ def _relaxed_search(problem, limit=5):
         return search_products(p, limit=limit)
 
     for i in range(1, len(drop_order) + 1):
-        drop_fields = drop_order[:i]
-        results = try_search(drop_fields)
+        results = try_search(drop_order[:i])
         if results:
             return results
-
     return []
 
 
-# ---------- COMPARE ----------
-
 def _handle_compare(state, text):
     item_nums = re.findall(r"\b([A-Z]\d{3}-\d{3,4}[A-Z]{0,3})\b", text.upper())
-
     if len(item_nums) < 2:
         return _response(
             state,
@@ -106,7 +95,6 @@ def _handle_compare(state, text):
         if n not in seen:
             seen.add(n)
             unique.append(n)
-
     if len(unique) < 2:
         return _response(state, "I need two different item numbers to compare.", [])
 
@@ -114,14 +102,11 @@ def _handle_compare(state, text):
     a, b = _find_product(a_num), _find_product(b_num)
 
     if a is None and b is None:
-        return _response(state,
-            "I couldn't find " + a_num + " or " + b_num + " in the Bead catalog.", [])
+        return _response(state, "I couldn't find " + a_num + " or " + b_num + " in the Bead catalog.", [])
     if a is None:
-        return _response(state,
-            "I found " + b_num + " but not " + a_num + " in the Bead catalog.", [])
+        return _response(state, "I found " + b_num + " but not " + a_num + " in the Bead catalog.", [])
     if b is None:
-        return _response(state,
-            "I found " + a_num + " but not " + b_num + " in the Bead catalog.", [])
+        return _response(state, "I found " + a_num + " but not " + b_num + " in the Bead catalog.", [])
 
     rows = []
     differences = 0
@@ -165,8 +150,6 @@ def _handle_compare(state, text):
     )
 
 
-# ---------- ALTERNATIVES ----------
-
 def _handle_alternatives(state, text):
     item_num = extract_item_number(text)
     base = None
@@ -177,8 +160,7 @@ def _handle_alternatives(state, text):
     if base is None:
         return _response(
             state,
-            "Which product should I find alternatives for? Give me an item number "
-            "like W018-584AC.",
+            "Which product should I find alternatives for? Give me an item number like W018-584AC.",
             [],
             suggestions=["Alternatives to W018-584AC", "Alternatives to W020-431AC"],
         )
@@ -206,21 +188,18 @@ def _handle_alternatives(state, text):
         s = score(p)
         if s < 0:
             continue
-        p_clean = {k: v for k, v in p.items() if not k.startswith("_")}
-        scored.append((s, p_clean))
+        scored.append((s, {k: v for k, v in p.items() if not k.startswith("_")}))
 
     scored.sort(key=lambda sp: (-sp[0], sp[1].get("item_number", "")))
     top = [p for _, p in scored[:5]]
 
     if not top:
-        return _response(state,
-            "I couldn't find alternatives to " + base["item_number"] + " in the Bead catalog.", [])
+        return _response(state, "I couldn't find alternatives to " + base["item_number"] + ".", [])
 
     reply = (
         "Here are products similar to " + base["item_number"] + " ("
         + str(base.get("pin_type", "?")) + ", " + str(base.get("material", "?"))
-        + "):\n\n"
-        + _format_product_cards(top)
+        + "):\n\n" + _format_product_cards(top)
         + "\n\nSimilarity is based on shared pin type, material, end type, and "
         "dimensional attributes. Please confirm the exact specifications with Bead "
         "before selection."
@@ -228,9 +207,7 @@ def _handle_alternatives(state, text):
 
     save(state)
     return _response(
-        state,
-        reply,
-        [],
+        state, reply, [],
         products=top,
         suggestions=[
             "Compare " + base["item_number"] + " and " + top[0]["item_number"],
@@ -238,8 +215,6 @@ def _handle_alternatives(state, text):
         ],
     )
 
-
-# ---------- CONTEXT SWITCH ----------
 
 SWITCH_PATTERNS = [
     r"\bactually\b.{0,30}\bforget\b",
@@ -254,8 +229,6 @@ def _is_context_switch(text):
     t = text.lower()
     return any(re.search(p, t) for p in SWITCH_PATTERNS)
 
-
-# ---------- MAIN ----------
 
 def handle_turn(session_id, message):
     state = get_or_create(session_id)
@@ -304,6 +277,7 @@ def handle_turn(session_id, message):
         )
 
     if intent == "qa":
+        # Surface real errors to logs. Only catch expected retrieval misses.
         try:
             from app.knowledge.embed import load_pretrained, embed_texts as _embed
             load_pretrained()
@@ -311,8 +285,11 @@ def handle_turn(session_id, message):
             raw = vsearch(qvec, top_k=8)
             evidence = rerank(text, raw, top_k=4)
             evidence = [e for e in evidence if e["_rerank_score"] > 0.35]
-        except Exception:
+            logger.info("QA retrieval: query=%r, top_k=%d, kept=%d", text, len(raw), len(evidence))
+        except Exception as exc:
+            logger.exception("QA retrieval failed: %s", exc)
             evidence = []
+
         if not evidence:
             return _response(state, compose_refusal("related"), [], suggestions=[
                 "What is the swaging process?",
@@ -344,10 +321,9 @@ def handle_turn(session_id, message):
             product_suggestions.append("Show me alternatives to " + products[0]["item_number"])
             product_suggestions.append("Request a quote for " + products[0]["item_number"])
 
-            full = heading + "\n" + body + tail
-            return _response(state, full, [], products=products, suggestions=product_suggestions)
+            return _response(state, heading + "\n" + body + tail, [],
+                             products=products, suggestions=product_suggestions)
 
-        # No exact match. Try relaxed search before giving up.
         relaxed = _relaxed_search(state.active_problem, limit=5)
         if relaxed:
             save(state)
@@ -355,11 +331,9 @@ def handle_turn(session_id, message):
                 "No exact match with all constraints, but here are the closest "
                 "products (with fewer filters applied):"
             )
-            body = _format_product_cards(relaxed)
-            full = heading + "\n" + body + "\n\nYou can refine this or request an RFI."
             return _response(
                 state,
-                full,
+                heading + "\n" + _format_product_cards(relaxed) + "\n\nYou can refine this or request an RFI.",
                 [],
                 products=relaxed,
                 suggestions=[
@@ -398,4 +372,3 @@ def _response(state, reply, evidence, products=None, actions=None, suggestions=N
         "actions": actions or [],
         "suggestions": suggestions or [],
     }
-

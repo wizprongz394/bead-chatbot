@@ -1,4 +1,4 @@
-"""Main conversation turn handler. Orchestrates intent, constraints, questions, retrieval."""
+"""Main conversation turn handler."""
 import logging
 import re
 
@@ -63,14 +63,9 @@ def _find_product(item_number):
 
 
 def _relaxed_search(problem, limit=5):
-    """
-    Relaxed search: drop only SECONDARY constraints (application, mounting,
-    end_type). Never drop product_family, pin_type, material, item_number,
-    or dimensional bounds - those are the primary ask.
-    """
+    """Relaxed search: drop only SECONDARY constraints. Never drop
+    product_family, pin_type, material, item_number, or dimensions."""
     import copy
-
-    # Only these get dropped
     drop_order = ["application", "end_type", "mounting"]
 
     def try_search(drop_fields):
@@ -79,17 +74,14 @@ def _relaxed_search(problem, limit=5):
             setattr(p, field, None)
         return search_products(p, limit=limit)
 
-    # First, try the search with all fields intact
     direct = try_search([])
     if direct:
         return direct
 
-    # Then progressively drop secondary fields
     for i in range(1, len(drop_order) + 1):
         results = try_search(drop_order[:i])
         if results:
             return results
-
     return []
 
 
@@ -230,22 +222,20 @@ def _is_context_switch(text):
     return any(re.search(p, t) for p in SWITCH_PATTERNS)
 
 
-DISCOVERY_QUERY_PATTERNS = [
-    r"^\s*(show|find|give|list)\s+me\b",
-    r"^\s*what\s+(pins|products|parts)",
-    r"^\s*tell\s+me\s+about\b",
-    r"\bproducts?\b",
-    r"\bpins?\b",
-    r"\bparts?\b",
+# True explicit commands: "show me X", "find me X", "list X", "give me X",
+# "what pins", "what products". These should ALWAYS return results, not
+# ask clarifying questions.
+EXPLICIT_COMMAND_PATTERNS = [
+    r"^\s*(show|find|list|give)\s+me\b",
+    r"^\s*(show|find|list|give)\s+(all|the|any)\b",
+    r"^\s*what\s+(pins|products|parts|contact)",
+    r"^\s*i\s+(want|need)\s+to\s+see\b",
 ]
 
 
-def _is_explicit_discovery(text):
+def _is_explicit_command(text):
     t = text.lower()
-    for p in DISCOVERY_QUERY_PATTERNS:
-        if re.search(p, t):
-            return True
-    return False
+    return any(re.search(p, t) for p in EXPLICIT_COMMAND_PATTERNS)
 
 
 def _family_conflicts_with_state(state, text):
@@ -275,11 +265,13 @@ def handle_turn(session_id, message):
     if not text:
         return _response(state, "I didn't catch that. Could you rephrase?", [])
 
+    explicit_cmd = _is_explicit_command(text)
+
     if _is_context_switch(text):
         if state.active_problem.known_fields():
             state.archive_and_reset("user initiated context switch")
         state._just_switched = True
-    elif _is_explicit_discovery(text) and _family_conflicts_with_state(state, text):
+    elif explicit_cmd and _family_conflicts_with_state(state, text):
         state.archive_and_reset("implicit context switch: new product family")
 
     intent = classify(text)
@@ -303,11 +295,6 @@ def handle_turn(session_id, message):
                         "Request a quote for " + item_num,
                         "Compare " + item_num + " with another product",
                     ])
-            else:
-                return _response(state,
-                    "I couldn't find " + item_num + " in the Bead catalog I have access to.",
-                    [],
-                    suggestions=["Show me square tandem pins", "What materials does Bead work with?"])
 
     if intent == "off_topic":
         return _response(state, compose_refusal("off_topic"), [])
@@ -317,8 +304,7 @@ def handle_turn(session_id, message):
         return _response(state,
             "I'll route this to the appropriate Bead team.\n\n"
             + _format_requirement_summary(state.active_problem),
-            [],
-            actions=[{"type": "escalate"}])
+            [], actions=[{"type": "escalate"}])
 
     if intent == "rfi":
         save(state)
@@ -326,8 +312,7 @@ def handle_turn(session_id, message):
             "For a commercial request like this, I'd recommend submitting an RFI.\n\n"
             + _format_requirement_summary(state.active_problem)
             + "\n\nYou can submit this to Bead via the contact page.",
-            [],
-            actions=[{"type": "rfi_prefill"}],
+            [], actions=[{"type": "rfi_prefill"}],
             suggestions=["Request a sample", "What is Bead's lead time?"])
 
     if intent == "qa":
@@ -338,7 +323,6 @@ def handle_turn(session_id, message):
             raw = vsearch(qvec, top_k=8)
             evidence = rerank(text, raw, top_k=4)
             evidence = [e for e in evidence if e["_rerank_score"] > 0.35]
-            logger.info("QA retrieval: query=%r, top_k=%d, kept=%d", text, len(raw), len(evidence))
         except Exception as exc:
             logger.exception("QA retrieval failed: %s", exc)
             evidence = []
@@ -354,17 +338,21 @@ def handle_turn(session_id, message):
     if intent == "compare":
         return _handle_compare(state, text)
 
+    # Discovery: run product search if we have any constraints
     if _has_meaningful_constraints(state.active_problem):
         products = search_products(state.active_problem, limit=5)
         if products:
             save(state)
             heading = "I found " + str(len(products)) + " product(s) matching your requirements:"
             body = _format_product_cards(products)
-            next_q = select_next_question(state.active_problem, state.questions_asked)
+
+            # Only offer a follow-up question if this was NOT an explicit command
             tail = ""
-            if next_q:
-                tail = "\n\nTo narrow this down: " + next_q["prompt"]
-                state.questions_asked.append(next_q["field"])
+            if not explicit_cmd:
+                next_q = select_next_question(state.active_problem, state.questions_asked)
+                if next_q:
+                    tail = "\n\nTo narrow this down: " + next_q["prompt"]
+                    state.questions_asked.append(next_q["field"])
 
             product_suggestions = []
             if len(products) >= 2:
@@ -379,16 +367,30 @@ def handle_turn(session_id, message):
         relaxed = _relaxed_search(state.active_problem, limit=5)
         if relaxed:
             save(state)
-            heading = ("I relaxed some filters to find these products:")
+            heading = "I relaxed some filters to find these products:"
             return _response(state,
                 heading + "\n" + _format_product_cards(relaxed) + "\n\nYou can refine this or request an RFI.",
-                [],
-                products=relaxed,
+                [], products=relaxed,
                 suggestions=[
                     "Show me alternatives to " + relaxed[0]["item_number"],
                     "Request a quote for " + relaxed[0]["item_number"],
                 ])
 
+    # No constraints yet OR no products found.
+    # For explicit commands, don't ask questions - give a generic message.
+    if explicit_cmd:
+        return _response(state,
+            "I couldn't find products matching that description in the Bead catalog. "
+            "Try being more specific, or tell me the pin family (hollow, solid wire, "
+            "end-to-end, or pin assembly).",
+            [],
+            suggestions=[
+                "Show me hollow pin products",
+                "Show me square tandem pins",
+                "Show me end-to-end pins",
+            ])
+
+    # Default: ask the next clarifying question
     next_q = select_next_question(state.active_problem, state.questions_asked)
     if next_q:
         state.questions_asked.append(next_q["field"])

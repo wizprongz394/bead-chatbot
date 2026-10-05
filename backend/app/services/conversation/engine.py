@@ -4,7 +4,9 @@ import re
 
 from app.services.conversation.state import get_or_create, save
 from app.services.conversation.intents import classify
-from app.services.conversation.constraints import extract_into_state, extract_item_number
+from app.services.conversation.constraints import (
+    extract_into_state, extract_item_number, extract_product_family, extract_pin_type,
+)
 from app.services.conversation.questions import select_next_question, summary
 from app.services.retrieval.vector_store import search as vsearch, rerank
 from app.services.retrieval.product_search import search_products, _load_products
@@ -79,16 +81,11 @@ def _relaxed_search(problem, limit=5):
 def _handle_compare(state, text):
     item_nums = re.findall(r"\b([A-Z]\d{3}-\d{3,4}[A-Z]{0,3})\b", text.upper())
     if len(item_nums) < 2:
-        return _response(
-            state,
+        return _response(state,
             "I can compare two Bead products if you give me their item numbers. "
             "For example: 'compare W018-584AC and W020-431AC'.",
             [],
-            suggestions=[
-                "Compare W018-584AC and W020-431AC",
-                "Compare W025-048AC and W025-051AC",
-            ],
-        )
+            suggestions=["Compare W018-584AC and W020-431AC", "Compare W025-048AC and W025-051AC"])
 
     seen, unique = set(), []
     for n in item_nums:
@@ -130,24 +127,17 @@ def _handle_compare(state, text):
         lines.append("")
         lines.append("Key differences:")
         for r in meaningful[:6]:
-            lines.append(
-                "  - " + r["label"] + ":  " + a_num + " = " + str(r["a"])
-                + "   |   " + b_num + " = " + str(r["b"])
-            )
+            lines.append("  - " + r["label"] + ":  " + a_num + " = " + str(r["a"])
+                         + "   |   " + b_num + " = " + str(r["b"]))
 
     save(state)
-    return _response(
-        state,
-        "\n".join(lines),
-        [],
-        products=[a, b],
+    return _response(state, "\n".join(lines), [], products=[a, b],
         actions=[{"type": "comparison", "rows": rows, "a": a, "b": b}],
         suggestions=[
             "Show me alternatives to " + a_num,
             "Request a quote for " + a_num,
             "Compare " + a_num + " with another product",
-        ],
-    )
+        ])
 
 
 def _handle_alternatives(state, text):
@@ -158,12 +148,10 @@ def _handle_alternatives(state, text):
     if base is None and state.active_problem.item_number is not None:
         base = _find_product(state.active_problem.item_number.value)
     if base is None:
-        return _response(
-            state,
+        return _response(state,
             "Which product should I find alternatives for? Give me an item number like W018-584AC.",
             [],
-            suggestions=["Alternatives to W018-584AC", "Alternatives to W020-431AC"],
-        )
+            suggestions=["Alternatives to W018-584AC", "Alternatives to W020-431AC"])
 
     catalog = _load_products()
 
@@ -206,14 +194,11 @@ def _handle_alternatives(state, text):
     )
 
     save(state)
-    return _response(
-        state, reply, [],
-        products=top,
+    return _response(state, reply, [], products=top,
         suggestions=[
             "Compare " + base["item_number"] + " and " + top[0]["item_number"],
             "Show me products like " + top[0]["item_number"],
-        ],
-    )
+        ])
 
 
 SWITCH_PATTERNS = [
@@ -230,6 +215,46 @@ def _is_context_switch(text):
     return any(re.search(p, t) for p in SWITCH_PATTERNS)
 
 
+# Patterns for detecting explicit discovery signals
+DISCOVERY_QUERY_PATTERNS = [
+    r"^\s*(show|find|give|list)\s+me\b",
+    r"^\s*what\s+(pins|products|parts)",
+    r"^\s*tell\s+me\s+about\b",
+    r"\bproducts?\b",
+    r"\bpins?\b",
+    r"\bparts?\b",
+]
+
+
+def _is_explicit_discovery(text):
+    """True if the message looks like 'show me X' or 'tell me about X'."""
+    t = text.lower()
+    for p in DISCOVERY_QUERY_PATTERNS:
+        if re.search(p, t):
+            return True
+    return False
+
+
+def _family_conflicts_with_state(state, text):
+    """True if the new message names a family/pin-type that differs from state."""
+    new_family = extract_product_family(text)
+    new_pin_type = extract_pin_type(text)
+
+    cur_family = state.active_problem.product_family
+    cur_pin_type = state.active_problem.pin_type
+
+    # If the new message specifies a product family and it differs from current state
+    if new_family and cur_family and cur_family.value != new_family:
+        return True
+    # If the new message specifies a pin type and it differs from current state
+    if new_pin_type and cur_pin_type:
+        cur = str(cur_pin_type.value).lower()
+        new = str(new_pin_type).lower()
+        if cur != new:
+            return True
+    return False
+
+
 def handle_turn(session_id, message):
     state = get_or_create(session_id)
     state.bump()
@@ -238,46 +263,66 @@ def handle_turn(session_id, message):
     if not text:
         return _response(state, "I didn't catch that. Could you rephrase?", [])
 
+    # Context switch: explicit or implicit (new family/pin type differs from state)
     if _is_context_switch(text):
         if state.active_problem.known_fields():
             state.archive_and_reset("user initiated context switch")
         state._just_switched = True
+    elif _is_explicit_discovery(text) and _family_conflicts_with_state(state, text):
+        state.archive_and_reset("implicit context switch: new product family")
 
     intent = classify(text)
     state.current_intent = intent
 
+    # Alternatives check (before generic discover)
     if intent == "discover" and re.search(r"\b(similar|alternatives?|like)\b", text.lower()):
         return _handle_alternatives(state, text)
 
     extract_into_state(text, state.active_problem)
+
+    # If the message contains a specific item number AND the user is asking about it,
+    # route to product lookup (not Q&A)
+    if intent in ("qa", "discover"):
+        item_num = extract_item_number(text)
+        if item_num and re.search(r"\b(tell|show|about|what|describe|details?|specs?|for)\b", text.lower()):
+            product = _find_product(item_num)
+            if product:
+                save(state)
+                reply = "Here's what I have for " + item_num + ":\n\n" + _format_product_cards([product])
+                return _response(state, reply, [], products=[product],
+                    suggestions=[
+                        "Show me alternatives to " + item_num,
+                        "Request a quote for " + item_num,
+                        "Compare " + item_num + " with another product",
+                    ])
+            else:
+                return _response(state,
+                    "I couldn't find " + item_num + " in the Bead catalog I have access to.",
+                    [],
+                    suggestions=["Show me square tandem pins", "What materials does Bead work with?"])
 
     if intent == "off_topic":
         return _response(state, compose_refusal("off_topic"), [])
 
     if intent == "escalate":
         save(state)
-        return _response(
-            state,
+        return _response(state,
             "I'll route this to the appropriate Bead team.\n\n"
             + _format_requirement_summary(state.active_problem),
             [],
-            actions=[{"type": "escalate"}],
-        )
+            actions=[{"type": "escalate"}])
 
     if intent == "rfi":
         save(state)
-        return _response(
-            state,
+        return _response(state,
             "For a commercial request like this, I'd recommend submitting an RFI.\n\n"
             + _format_requirement_summary(state.active_problem)
             + "\n\nYou can submit this to Bead via the contact page.",
             [],
             actions=[{"type": "rfi_prefill"}],
-            suggestions=["Request a sample", "What is Bead's lead time?"],
-        )
+            suggestions=["Request a sample", "What is Bead's lead time?"])
 
     if intent == "qa":
-        # Surface real errors to logs. Only catch expected retrieval misses.
         try:
             from app.knowledge.embed import load_pretrained, embed_texts as _embed
             load_pretrained()
@@ -316,8 +361,7 @@ def handle_turn(session_id, message):
             product_suggestions = []
             if len(products) >= 2:
                 product_suggestions.append(
-                    "Compare " + products[0]["item_number"] + " and " + products[1]["item_number"]
-                )
+                    "Compare " + products[0]["item_number"] + " and " + products[1]["item_number"])
             product_suggestions.append("Show me alternatives to " + products[0]["item_number"])
             product_suggestions.append("Request a quote for " + products[0]["item_number"])
 
@@ -327,20 +371,16 @@ def handle_turn(session_id, message):
         relaxed = _relaxed_search(state.active_problem, limit=5)
         if relaxed:
             save(state)
-            heading = (
-                "No exact match with all constraints, but here are the closest "
-                "products (with fewer filters applied):"
-            )
-            return _response(
-                state,
+            heading = ("No exact match with all constraints, but here are the closest "
+                       "products (with fewer filters applied):")
+            return _response(state,
                 heading + "\n" + _format_product_cards(relaxed) + "\n\nYou can refine this or request an RFI.",
                 [],
                 products=relaxed,
                 suggestions=[
                     "Show me alternatives to " + relaxed[0]["item_number"],
                     "Request a quote for " + relaxed[0]["item_number"],
-                ],
-            )
+                ])
 
     next_q = select_next_question(state.active_problem, state.questions_asked)
     if next_q:
@@ -349,13 +389,11 @@ def handle_turn(session_id, message):
         return _response(state, next_q["prompt"], [])
 
     save(state)
-    return _response(
-        state,
+    return _response(state,
         "I've captured these requirements but couldn't find a match.\n\n"
         + _format_requirement_summary(state.active_problem),
         [],
-        actions=[{"type": "rfi_prefill"}],
-    )
+        actions=[{"type": "rfi_prefill"}])
 
 
 def _response(state, reply, evidence, products=None, actions=None, suggestions=None):

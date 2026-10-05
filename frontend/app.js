@@ -3,7 +3,16 @@
    Stateless backend: client holds conversation state
    ============================================================ */
 
-const API_BASE = window.BEAD_API_BASE || "http://127.0.0.1:8000";
+const API_BASE = (function() {
+    // Local dev: browser is on localhost, backend runs on port 8000
+    const h = window.location.hostname;
+    if (h === "localhost" || h === "127.0.0.1") {
+        return "http://127.0.0.1:8000";
+    }
+    // Production: frontend and backend share the same Vercel domain.
+    // API calls go to /api/*, routed to the backend service.
+    return "";
+})();
 
 const state = {
     sessionId: null,

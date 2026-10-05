@@ -435,3 +435,36 @@ html, body {
 .msg-suggestions {
     animation: fadeIn 0.3s ease-out;
 }
+
+/* Clickable product cards */
+a.product-card {
+    text-decoration: none;
+    display: block;
+    position: relative;
+}
+
+a.product-card:hover {
+    border-color: var(--copper-500);
+    box-shadow: var(--shadow);
+    transform: translateY(-2px);
+}
+
+.product-link-hint {
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--slate-200);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--copper-500);
+    font-weight: 700;
+    transition: all 0.15s;
+}
+
+a.product-card:hover .product-link-hint {
+    color: var(--copper-400);
+}
+
+a.product-card:hover .product-link-hint::after {
+    content: " \2197";
+}

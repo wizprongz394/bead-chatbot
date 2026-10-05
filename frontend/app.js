@@ -62,17 +62,23 @@ async function checkHealth() {
 function renderProductGrid(products) {
     const grid = el("div", { class: "product-grid" });
     products.forEach((p) => {
-        const card = el("div", { class: "product-card" });
+        const url = p.source_url || "";
+        const card = url
+            ? el("a", { class: "product-card", href: url, target: "_blank", rel: "noopener" })
+            : el("div", { class: "product-card" });
+
         card.innerHTML =
             "<div class=\"product-part\">" + escapeHtml(p.item_number || "?") + "</div>" +
             "<div class=\"product-spec\"><span class=\"product-spec-label\">Type</span><span class=\"product-spec-value\">" + escapeHtml(p.pin_type || "-") + "</span></div>" +
             "<div class=\"product-spec\"><span class=\"product-spec-label\">Material</span><span class=\"product-spec-value\">" + escapeHtml(p.material || "-") + "</span></div>" +
             "<div class=\"product-spec\"><span class=\"product-spec-label\">Length</span><span class=\"product-spec-value\">" + escapeHtml(p.length_in || "-") + "</span></div>" +
-            "<div class=\"product-spec\"><span class=\"product-spec-label\">Diameter</span><span class=\"product-spec-value\">" + escapeHtml(p.diameter_in || "-") + "</span></div>";
+            "<div class=\"product-spec\"><span class=\"product-spec-label\">Diameter</span><span class=\"product-spec-value\">" + escapeHtml(p.diameter_in || "-") + "</span></div>" +
+            (url ? "<div class=\"product-link-hint\">View in catalog &rarr;</div>" : "");
         grid.appendChild(card);
     });
     return grid;
 }
+
 
 function renderComparisonTable(action) {
     const a = action.a || {};

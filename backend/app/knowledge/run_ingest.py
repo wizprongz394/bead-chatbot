@@ -1,4 +1,4 @@
-﻿"""Entry point for Day 1 Hour 2-5. Run: python -m app.knowledge.run_ingest"""
+"""Entry point for Day 1 Hour 2-5. Run: python -m app.knowledge.run_ingest"""
 
 import sys
 from pathlib import Path
@@ -46,7 +46,7 @@ def main():
         if "/viewitems/" in url:
             rows = extract_product_table(soup)
             for row in rows:
-                row["_source_url"] = url
+                row["source_url"] = url
                 all_products.append(row)
             print(f"       {url}: {len(rows)} products")
 
@@ -98,3 +98,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

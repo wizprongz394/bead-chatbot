@@ -8,8 +8,6 @@ from app.config import DATA_DIR
 
 _NUM_RE = re.compile(r"(-?\d+(?:\.\d+)?)")
 
-
-# Map from product_family values used in state -> substrings found in source_url
 FAMILY_URL_PATTERNS = {
     "hollow_pin": "hollow-contact-pins",
     "solid_wire_pin": "solid-wire-pins",
@@ -35,7 +33,7 @@ def _parse_inches(s):
 def _load_products():
     path = DATA_DIR / "products.json"
     if not path.exists():
-        raise FileNotFoundError("products.json missing. Run the ingestion pipeline first.")
+        raise FileNotFoundError("products.json missing.")
     products = json.loads(path.read_text(encoding="utf-8"))
     for p in products:
         p["_length_num"] = _parse_inches(p.get("length_in"))
@@ -75,12 +73,10 @@ def _to_float(c):
 
 
 def _family_matches(product_url, family_value):
-    """Return True if the product's URL belongs to the requested family."""
     if not family_value or not product_url:
         return True
     pattern = FAMILY_URL_PATTERNS.get(str(family_value))
     if not pattern:
-        # Unknown family value - don't filter
         return True
     return pattern in product_url
 
@@ -106,13 +102,23 @@ def search_products(problem, limit=10):
     dia_lo = _to_float(getattr(problem, "diameter_in_min", None))
     dia_hi = _to_float(getattr(problem, "diameter_in_max", None))
 
+    family_active = bool(product_family)
+
     for p in products:
         if item_number and p.get("item_number", "").lower() != str(item_number).lower():
             continue
         if material and not _ci_match(p.get("material"), material):
             continue
-        if pin_type and not _ci_match(p.get("pin_type"), pin_type):
-            continue
+
+        # pin_type filter: skip if product has no pin_type AND family filter is active
+        if pin_type:
+            product_pt = p.get("pin_type")
+            if product_pt is not None:
+                if not _ci_match(product_pt, pin_type):
+                    continue
+            elif not family_active:
+                continue
+
         if end_type and not _ci_match(p.get("end_type"), end_type):
             continue
         if not _family_matches(p.get("source_url", ""), product_family):

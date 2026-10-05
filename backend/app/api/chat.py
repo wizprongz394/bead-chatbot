@@ -22,6 +22,7 @@ class ChatResponse(BaseModel):
     evidence: list
     products: list
     actions: list
+    suggestions: list = []
 
 
 @router.post("/chat", response_model=ChatResponse)

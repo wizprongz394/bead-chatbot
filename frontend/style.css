@@ -252,3 +252,186 @@ html, body {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--slate-300); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--slate-500); }
+
+/* ============================================================
+   v2 additions: comparison table, message suggestions, RFI block
+   ============================================================ */
+
+.comparison-wrap {
+    margin-top: 14px;
+    border: 1px solid var(--slate-200);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    background: var(--white);
+}
+
+.comparison-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+
+.comparison-table thead th {
+    background: var(--navy-900);
+    color: var(--white);
+    padding: 10px 12px;
+    text-align: left;
+    font-weight: 600;
+    font-family: var(--font-mono);
+    letter-spacing: 0.02em;
+    border-bottom: 2px solid var(--copper-500);
+}
+
+.comparison-table thead th.col-a,
+.comparison-table thead th.col-b {
+    color: var(--copper-300);
+}
+
+.comparison-table tbody td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--slate-200);
+    vertical-align: top;
+}
+
+.comparison-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.comparison-table tbody tr.same {
+    background: var(--white);
+}
+
+.comparison-table tbody tr.diff {
+    background: #fff8f0;
+}
+
+.comparison-table tbody tr.diff .value-a,
+.comparison-table tbody tr.diff .value-b {
+    font-weight: 700;
+    color: var(--copper-500);
+}
+
+.comparison-table .field-label {
+    color: var(--slate-500);
+    font-weight: 500;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    width: 30%;
+}
+
+.comparison-table .value-a,
+.comparison-table .value-b {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--navy-900);
+}
+
+.comparison-legend {
+    display: flex;
+    gap: 16px;
+    padding: 8px 12px;
+    background: var(--slate-100);
+    border-top: 1px solid var(--slate-200);
+    font-size: 11px;
+    color: var(--slate-500);
+}
+
+.legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.legend-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+.legend-dot.same { background: var(--slate-300); }
+.legend-dot.diff { background: var(--copper-500); }
+
+.msg-suggestions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px dashed var(--slate-200);
+}
+
+.msg-suggestion {
+    background: var(--white);
+    border: 1px solid var(--slate-300);
+    color: var(--navy-700);
+    padding: 7px 12px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-weight: 500;
+}
+
+.msg-suggestion:hover {
+    background: var(--copper-500);
+    color: var(--white);
+    border-color: var(--copper-500);
+    transform: translateY(-1px);
+}
+
+.rfi-block {
+    margin-top: 14px;
+    background: var(--navy-900);
+    border-radius: var(--radius-sm);
+    padding: 14px 16px;
+    color: var(--white);
+}
+
+.rfi-title {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--copper-300);
+    font-weight: 700;
+    margin-bottom: 10px;
+}
+
+.rfi-pre {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--slate-100);
+    white-space: pre-wrap;
+    margin-bottom: 12px;
+    padding: 10px 12px;
+    background: rgba(255,255,255,0.05);
+    border-radius: 4px;
+}
+
+.rfi-copy {
+    background: var(--copper-500);
+    color: var(--white);
+    border: none;
+    border-radius: var(--radius-sm);
+    padding: 8px 14px;
+    font-size: 12px;
+    font-family: inherit;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.rfi-copy:hover {
+    background: var(--copper-400);
+    transform: translateY(-1px);
+}
+
+/* Smooth entrance for new message types */
+.comparison-wrap,
+.rfi-block,
+.msg-suggestions {
+    animation: fadeIn 0.3s ease-out;
+}

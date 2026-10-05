@@ -1,12 +1,8 @@
 """Conversation state. Supports context switching. Constraints carry provenance."""
 from dataclasses import dataclass, field
-from typing import Optional, Literal
+from typing import Optional
 import uuid
 from datetime import datetime, timezone
-
-
-SourceType = Literal["user_stated", "inferred", "default"]
-ConfidenceType = Literal["high", "medium", "low"]
 
 
 @dataclass
@@ -67,6 +63,7 @@ class ConversationState:
     turn_count: int = 0
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     last_updated: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    _just_switched: bool = False
 
     def archive_and_reset(self, reason):
         if self.active_problem.known_fields():

@@ -1,5 +1,5 @@
 /* ============================================================
-   BEAD ELECTRONICS - Product Assistant frontend
+   BEAD ELECTRONICS - Product Assistant frontend (v2)
    ============================================================ */
 
 const API_BASE = "http://127.0.0.1:8000";
@@ -18,7 +18,6 @@ const els = {
     resetBtn: document.getElementById("reset-btn"),
     statusDot: document.getElementById("status-dot"),
     statusText: document.getElementById("status-text"),
-    suggestions: document.getElementById("suggestions"),
 };
 
 function el(tag, props = {}, children = []) {
@@ -58,42 +57,121 @@ async function checkHealth() {
     }
 }
 
+// ---------- renderers ----------
+
+function renderProductGrid(products) {
+    const grid = el("div", { class: "product-grid" });
+    products.forEach((p) => {
+        const card = el("div", { class: "product-card" });
+        card.innerHTML =
+            "<div class=\"product-part\">" + escapeHtml(p.item_number || "?") + "</div>" +
+            "<div class=\"product-spec\"><span class=\"product-spec-label\">Type</span><span class=\"product-spec-value\">" + escapeHtml(p.pin_type || "-") + "</span></div>" +
+            "<div class=\"product-spec\"><span class=\"product-spec-label\">Material</span><span class=\"product-spec-value\">" + escapeHtml(p.material || "-") + "</span></div>" +
+            "<div class=\"product-spec\"><span class=\"product-spec-label\">Length</span><span class=\"product-spec-value\">" + escapeHtml(p.length_in || "-") + "</span></div>" +
+            "<div class=\"product-spec\"><span class=\"product-spec-label\">Diameter</span><span class=\"product-spec-value\">" + escapeHtml(p.diameter_in || "-") + "</span></div>";
+        grid.appendChild(card);
+    });
+    return grid;
+}
+
+function renderComparisonTable(action) {
+    const a = action.a || {};
+    const b = action.b || {};
+    const wrap = el("div", { class: "comparison-wrap" });
+    const table = el("table", { class: "comparison-table" });
+
+    const thead = el("thead");
+    const headerRow = el("tr");
+    headerRow.appendChild(el("th", {}, ["Field"]));
+    headerRow.appendChild(el("th", { class: "col-a" }, [a.item_number || "A"]));
+    headerRow.appendChild(el("th", { class: "col-b" }, [b.item_number || "B"]));
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
+
+    const tbody = el("tbody");
+    (action.rows || []).forEach((r) => {
+        if (r.field === "item_number") return;  // header already shows it
+        const tr = el("tr", { class: r.same ? "same" : "diff" });
+        tr.appendChild(el("td", { class: "field-label" }, [r.label]));
+        tr.appendChild(el("td", { class: "value-a" }, [String(r.a)]));
+        tr.appendChild(el("td", { class: "value-b" }, [String(r.b)]));
+        tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+
+    const legend = el("div", { class: "comparison-legend" });
+    legend.innerHTML =
+        "<span class=\"legend-item\"><span class=\"legend-dot same\"></span>Match</span>" +
+        "<span class=\"legend-item\"><span class=\"legend-dot diff\"></span>Difference</span>";
+    wrap.appendChild(legend);
+
+    return wrap;
+}
+
+function renderSources(evidence) {
+    const seen = new Set();
+    const sources = el("div", { class: "sources" });
+    sources.appendChild(el("div", { class: "sources-title" }, ["Sources"]));
+    evidence.forEach((e) => {
+        const url = e.source_url;
+        if (!url || seen.has(url)) return;
+        seen.add(url);
+        sources.appendChild(el("a", {
+            class: "source-link", href: url, target: "_blank", rel: "noopener",
+        }, [e.source_title || url]));
+    });
+    return sources;
+}
+
+function renderSuggestions(suggestions, onPick) {
+    const wrap = el("div", { class: "msg-suggestions" });
+    suggestions.forEach((s) => {
+        wrap.appendChild(el("button", {
+            class: "msg-suggestion",
+            onclick: () => onPick(s),
+        }, [s]));
+    });
+    return wrap;
+}
+
+// ---------- addMessage ----------
+
 function addMessage(role, content, options = {}) {
     const wrapper = el("div", { class: "message " + role });
     const avatar = el("div", { class: "message-avatar" }, [role === "user" ? "You" : "B"]);
     const bubble = el("div", { class: "message-content" });
 
-    const safe = escapeHtml(content).replace(/\n/g, "<br>");
-    bubble.innerHTML = safe;
-
-    if (options.products && options.products.length) {
-        const grid = el("div", { class: "product-grid" });
-        options.products.forEach((p) => {
-            const card = el("div", { class: "product-card" });
-            card.innerHTML =
-                "<div class=\"product-part\">" + escapeHtml(p.item_number || "?") + "</div>" +
-                "<div class=\"product-spec\"><span class=\"product-spec-label\">Type</span><span class=\"product-spec-value\">" + escapeHtml(p.pin_type || "-") + "</span></div>" +
-                "<div class=\"product-spec\"><span class=\"product-spec-label\">Material</span><span class=\"product-spec-value\">" + escapeHtml(p.material || "-") + "</span></div>" +
-                "<div class=\"product-spec\"><span class=\"product-spec-label\">Length</span><span class=\"product-spec-value\">" + escapeHtml(p.length_in || "-") + "</span></div>" +
-                "<div class=\"product-spec\"><span class=\"product-spec-label\">Diameter</span><span class=\"product-spec-value\">" + escapeHtml(p.diameter_in || "-") + "</span></div>";
-            grid.appendChild(card);
-        });
-        bubble.appendChild(grid);
+    if (content) {
+        const safe = escapeHtml(content).replace(/\n/g, "<br>");
+        bubble.innerHTML = safe;
     }
 
-    if (options.evidence && options.evidence.length) {
-        const seen = new Set();
-        const sources = el("div", { class: "sources" });
-        sources.appendChild(el("div", { class: "sources-title" }, ["Sources"]));
-        options.evidence.forEach((e) => {
-            const url = e.source_url;
-            if (!url || seen.has(url)) return;
-            seen.add(url);
-            const title = e.source_title || url;
-            const link = el("a", { class: "source-link", href: url, target: "_blank", rel: "noopener" }, [title]);
-            sources.appendChild(link);
+    // Comparison table (from actions)
+    if (options.actions && options.actions.length) {
+        options.actions.forEach((action) => {
+            if (action.type === "comparison") {
+                bubble.appendChild(renderComparisonTable(action));
+            }
+            if (action.type === "rfi_prefill" && options.state) {
+                bubble.appendChild(renderRfiBlock(options.state));
+            }
         });
-        bubble.appendChild(sources);
+    }
+
+    // Product cards
+    if (options.products && options.products.length) {
+        bubble.appendChild(renderProductGrid(options.products));
+    }
+
+    // Sources
+    if (options.evidence && options.evidence.length) {
+        bubble.appendChild(renderSources(options.evidence));
+    }
+
+    // Suggestions
+    if (options.suggestions && options.suggestions.length) {
+        bubble.appendChild(renderSuggestions(options.suggestions, sendMessage));
     }
 
     wrapper.appendChild(avatar);
@@ -102,6 +180,42 @@ function addMessage(role, content, options = {}) {
     els.messages.scrollTop = els.messages.scrollHeight;
     return wrapper;
 }
+
+function renderRfiBlock(state) {
+    const ap = state && state.active_problem;
+    if (!ap) return el("div");
+
+    const lines = [];
+    const fields = [
+        ["item_number", "Item Number"],
+        ["product_family", "Product Family"],
+        ["pin_type", "Pin Type"],
+        ["material", "Material"],
+        ["end_type", "End Type"],
+        ["application", "Application"],
+        ["volume", "Volume"],
+    ];
+    fields.forEach(([k, label]) => {
+        const c = ap[k];
+        if (c && c.value !== null && c.value !== undefined) {
+            lines.push(label + ": " + c.value);
+        }
+    });
+
+    const wrap = el("div", { class: "rfi-block" });
+    wrap.appendChild(el("div", { class: "rfi-title" }, ["RFI Summary - copy and send to Bead"]));
+    const pre = el("pre", { class: "rfi-pre" }, [lines.join("\n")]);
+    wrap.appendChild(pre);
+    const btn = el("button", { class: "rfi-copy", onclick: () => {
+        navigator.clipboard.writeText(lines.join("\n"));
+        btn.textContent = "Copied";
+        setTimeout(() => { btn.textContent = "Copy to clipboard"; }, 1500);
+    }}, ["Copy to clipboard"]);
+    wrap.appendChild(btn);
+    return wrap;
+}
+
+// ---------- typing indicator ----------
 
 function addTyping() {
     const wrapper = el("div", { class: "message assistant", id: "typing-indicator" });
@@ -120,6 +234,8 @@ function removeTyping() {
     if (t) t.remove();
 }
 
+// ---------- constraint panel ----------
+
 const FIELD_LABELS = {
     product_family: "Product Family",
     application: "Application",
@@ -137,13 +253,13 @@ const FIELD_LABELS = {
     volume: "Volume",
 };
 
-function renderConstraints(state) {
-    const ap = (state && state.active_problem) || {};
+function renderConstraints(stateObj) {
+    const ap = (stateObj && stateObj.active_problem) || {};
     const entries = [];
     Object.entries(FIELD_LABELS).forEach(([field, label]) => {
         const c = ap[field];
         if (!c || c.value === null || c.value === undefined) return;
-        entries.push({ field: field, label: label, value: c.value, source: c.source || "user_stated" });
+        entries.push({ field, label, value: c.value, source: c.source || "user_stated" });
     });
 
     els.constraints.innerHTML = "";
@@ -159,11 +275,13 @@ function renderConstraints(state) {
         item.appendChild(el("div", { class: "constraint-label" }, [e.label]));
         item.appendChild(el("div", { class: "constraint-value" }, [String(e.value)]));
         if (inferred) {
-            item.appendChild(el("div", { class: "constraint-source" }, [e.source]));
+            item.appendChild(el("div", { class: "constraint-source" }, ["inferred"]));
         }
         els.constraints.appendChild(item);
     });
 }
+
+// ---------- send ----------
 
 async function sendMessage(text) {
     if (state.isSending || !text.trim()) return;
@@ -193,17 +311,21 @@ async function sendMessage(text) {
         const data = await r.json();
 
         removeTyping();
-
         state.sessionId = data.session_id;
+
         addMessage("assistant", data.reply || "(no reply)", {
             products: data.products || [],
             evidence: data.evidence || [],
+            actions: data.actions || [],
+            suggestions: data.suggestions || [],
+            state: data.state,
         });
 
         renderConstraints(data.state);
     } catch (e) {
         removeTyping();
-        addMessage("assistant", "Sorry, I couldn't reach the assistant. Make sure the backend is running on port 8000.");
+        addMessage("assistant",
+            "Sorry, I couldn't reach the assistant. Make sure the backend is running on port 8000.");
         console.error(e);
     } finally {
         state.isSending = false;
@@ -211,6 +333,8 @@ async function sendMessage(text) {
         els.input.focus();
     }
 }
+
+// ---------- reset ----------
 
 async function resetConversation() {
     if (state.sessionId) {
@@ -230,11 +354,11 @@ function renderWelcome() {
             "<div class=\"welcome-icon\">&#9889;</div>" +
             "<h1>Hi, I'm your Bead Product Assistant.</h1>" +
             "<p>Describe what you need in plain language, and I'll help you find the right contact pin or answer technical questions.</p>" +
-            "<div class=\"suggestions\" id=\"suggestions\">" +
+            "<div class=\"suggestions\">" +
             "<button class=\"suggestion\" data-msg=\"I need a square tandem pin for a medical device, material C51000\">Find a square tandem pin</button>" +
             "<button class=\"suggestion\" data-msg=\"What is the swaging process?\">What is swaging?</button>" +
-            "<button class=\"suggestion\" data-msg=\"What materials does Bead work with?\">What materials does Bead offer?</button>" +
-            "<button class=\"suggestion\" data-msg=\"I need 10,000 pieces of W018-584AC\">Request a quote</button>" +
+            "<button class=\"suggestion\" data-msg=\"Compare W018-584AC and W020-431AC\">Compare two products</button>" +
+            "<button class=\"suggestion\" data-msg=\"Show me alternatives to W018-584AC\">Show alternatives</button>" +
             "</div>"
         })
     );
@@ -243,6 +367,8 @@ function renderWelcome() {
 
 function attachSuggestionHandlers() {
     document.querySelectorAll(".suggestion").forEach((btn) => {
+        if (btn._bound) return;
+        btn._bound = true;
         btn.addEventListener("click", () => {
             sendMessage(btn.dataset.msg || btn.textContent.trim());
         });

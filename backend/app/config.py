@@ -1,7 +1,5 @@
 from pathlib import Path
 from dotenv import load_dotenv
-
-# Load .env from backend/
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 APP_ROOT = Path(__file__).parent

@@ -137,17 +137,21 @@ def _handle_compare(state, text):
 
     rows = []
     differences = 0
+    matches = 0
     for key, label in COMPARE_FIELDS:
         av = a.get(key, "-") or "-"
         bv = b.get(key, "-") or "-"
         same = (av == bv)
-        # Don't count item_number as a difference - it's an identity field,
-        # not a spec. Two different products are always "different" by ID.
-        if not same and key != "item_number":
-            differences += 1
+        # Skip item_number entirely from counts - it's an identity field,
+        # not a spec.
+        if key != "item_number":
+            if same:
+                matches += 1
+            else:
+                differences += 1
         rows.append({"field": key, "label": label, "a": av, "b": bv, "same": same})
 
-    same_count = len(rows) - differences
+    same_count = matches
     lines = [
         "Comparing " + a_num + " and " + b_num + ":",
         "",
@@ -443,4 +447,5 @@ def _response(state, reply, evidence, products=None, actions=None, suggestions=N
         "actions": actions or [],
         "suggestions": suggestions or [],
     }
+
 

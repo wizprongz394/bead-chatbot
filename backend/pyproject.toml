@@ -1,0 +1,21 @@
+[project]
+name = "bead-chatbot-backend"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "httpx",
+    "beautifulsoup4",
+    "lxml",
+    "sentence-transformers",
+    "numpy",
+    "scikit-learn",
+    "openai",
+    "google-generativeai",
+    "python-dotenv",
+    "pydantic",
+]
+
+[tool.vercel]
+entrypoint = "app.main:app"

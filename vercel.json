@@ -1,0 +1,26 @@
+{
+  "services": {
+    "frontend": {
+      "root": "frontend/"
+    },
+    "backend": {
+      "root": "backend/",
+      "entrypoint": "app.main:app",
+      "framework": "fastapi",
+      "includeFiles": [
+        "backend/app/data/**",
+        "backend/app/data/**/*",
+        "backend/app/data/**/*.*"
+      ],
+      "excludeFiles": [
+        "backend/app/data/raw/**",
+        "backend/app/**/__pycache__/**",
+        "**/*.pyc"
+      ]
+    }
+  },
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": { "service": "backend" } },
+    { "source": "/(.*)", "destination": { "service": "frontend" } }
+  ]
+}

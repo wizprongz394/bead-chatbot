@@ -413,3 +413,4 @@ attachSuggestionHandlers();
 checkHealth();
 setInterval(checkHealth, 30000);
 els.input.focus();
+

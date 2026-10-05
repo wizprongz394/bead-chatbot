@@ -334,10 +334,18 @@ def handle_turn(session_id, message):
 
     if intent == "escalate":
         save(state)
-        return _response(state,
-            "I'll route this to the appropriate Bead team.\n\n"
-            + _format_requirement_summary(state.active_problem),
-            [], actions=[{"type": "escalate"}])
+        reply = (
+            "You can reach Bead Electronics directly:\n\n"
+            "  - Phone: 800.297.4851\n"
+            "  - Email: info@beadelectronics.com\n"
+            "  - Contact form: https://beadelectronics.com/company/contact-us\n"
+            "\nIf you'd like, I can prepare a summary of your requirements "
+            "so the Bead team has full context when you reach out.\n\n"
+        )
+        if state.active_problem.known_fields():
+            reply += _format_requirement_summary(state.active_problem)
+        return _response(state, reply, [], actions=[{"type": "rfi_prefill"}],
+            suggestions=["What materials does Bead work with?", "What is the swaging process?"])
 
     if intent == "rfi":
         save(state)
@@ -447,5 +455,6 @@ def _response(state, reply, evidence, products=None, actions=None, suggestions=N
         "actions": actions or [],
         "suggestions": suggestions or [],
     }
+
 
 

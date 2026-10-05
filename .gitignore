@@ -20,7 +20,7 @@ env/
 
 # Project-specific
 backend/app/data/raw/*.html
-backend/app/data/embeddings.npz
+# embeddings.npz now committed for Vercel deployment
 backend/app/data/chroma/
 
 # Logs and temp
@@ -30,3 +30,4 @@ tests/output/
 
 # Node
 node_modules/
+.vercel

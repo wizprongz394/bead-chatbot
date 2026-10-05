@@ -6,17 +6,7 @@
     "backend": {
       "root": "backend/",
       "entrypoint": "app.main:app",
-      "framework": "fastapi",
-      "includeFiles": [
-        "backend/app/data/**",
-        "backend/app/data/**/*",
-        "backend/app/data/**/*.*"
-      ],
-      "excludeFiles": [
-        "backend/app/data/raw/**",
-        "backend/app/**/__pycache__/**",
-        "**/*.pyc"
-      ]
+      "framework": "fastapi"
     }
   },
   "rewrites": [

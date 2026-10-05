@@ -305,9 +305,9 @@ def handle_turn(session_id, message):
 
     if intent == "qa":
         try:
-            from sentence_transformers import SentenceTransformer
-            model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
-            qvec = model.encode([text], convert_to_numpy=True)[0].tolist()
+            from app.knowledge.embed import load_pretrained, embed_texts as _embed
+            load_pretrained()
+            qvec = _embed([text])[0]
             raw = vsearch(qvec, top_k=8)
             evidence = rerank(text, raw, top_k=4)
             evidence = [e for e in evidence if e["_rerank_score"] > 0.35]
@@ -398,3 +398,4 @@ def _response(state, reply, evidence, products=None, actions=None, suggestions=N
         "actions": actions or [],
         "suggestions": suggestions or [],
     }
+

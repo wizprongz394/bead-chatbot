@@ -8,7 +8,6 @@ dependencies = [
     "httpx",
     "beautifulsoup4",
     "lxml",
-    "sentence-transformers",
     "numpy",
     "scikit-learn",
     "openai",

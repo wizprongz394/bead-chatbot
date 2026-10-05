@@ -1,12 +1,21 @@
-"""Loads embeddings + chunk metadata, provides cosine search and rerank."""
-import json
+"""In-memory TF-IDF vector store.
+
+The previous version loaded a precomputed embeddings.npz built with
+sentence-transformers (384-dim). Since we swapped to TF-IDF for Vercel
+(4096-dim), the stored matrix is now incompatible.
+
+Instead of loading a file, we fit TF-IDF on the embedded corpus once
+at module import and keep the normalized matrix in memory. Queries are
+transformed with the same fitted vectorizer, guaranteeing dimensional
+consistency.
+"""
 import re
-from functools import lru_cache
-from pathlib import Path
 
 import numpy as np
+from sklearn.feature_extraction.text import TfidfVectorizer
 
-from app.config import DATA_DIR
+from app.knowledge.corpus import CORPUS
+
 
 _STOPWORDS = {
     "the", "a", "an", "and", "or", "of", "for", "to", "in", "on", "at",
@@ -14,38 +23,45 @@ _STOPWORDS = {
     "as", "that", "this", "these", "those", "it", "its", "do", "does",
     "did", "can", "could", "would", "should", "will", "i", "you", "we",
     "they", "he", "she", "what", "which", "who", "when", "where", "why",
-    "how", "your", "our", "their", "my", "me", "us", "them"
+    "how", "your", "our", "their", "my", "me", "us", "them",
 }
 
 
-@lru_cache(maxsize=1)
-def _load():
-    npz_path = DATA_DIR / "embeddings.npz"
-    meta_path = DATA_DIR / "chunk_metadata.jsonl"
-    if not npz_path.exists() or not meta_path.exists():
-        raise FileNotFoundError(
-            "Vector store not found. Run `python -m app.knowledge.run_ingest` first."
-        )
-    data = np.load(npz_path)
-    embeddings = data["embeddings"]
-    chunks = []
-    with meta_path.open("r", encoding="utf-8") as f:
-        for line in f:
-            chunks.append(json.loads(line))
-    return embeddings, chunks
+def _keywords(text):
+    words = re.findall(r"[a-z0-9]+", text.lower())
+    return set(w for w in words if w not in _STOPWORDS and len(w) > 2)
+
+
+# Fit once at module import
+_VECTORIZER = TfidfVectorizer(max_features=4096, ngram_range=(1, 2), stop_words="english")
+_TEXTS = [c["text"] for c in CORPUS if c.get("text")]
+_MATRIX = _VECTORIZER.fit_transform(_TEXTS).toarray().astype(np.float32)
+_norms = np.linalg.norm(_MATRIX, axis=1, keepdims=True)
+_norms[_norms == 0] = 1
+_MATRIX = _MATRIX / _norms
 
 
 def search(query_vector, top_k=5):
-    embeddings, chunks = _load()
-    q = np.array(query_vector, dtype=np.float32)
+    """
+    query_vector: list[float] of dimension matching the fitted vectorizer.
+    Returns list of dicts: {text, source_url, source_title, content_type, score}.
+    """
+    q = np.array(query_vector, dtype=np.float32).flatten()
     n = np.linalg.norm(q)
     if n > 0:
         q = q / n
-    scores = embeddings @ q
+    # Guard: if dims mismatch, truncate to the smaller for graceful degradation
+    if q.shape[0] != _MATRIX.shape[1]:
+        min_dim = min(q.shape[0], _MATRIX.shape[1])
+        q = q[:min_dim]
+        m = _MATRIX[:, :min_dim]
+    else:
+        m = _MATRIX
+    scores = m @ q
     idx = np.argsort(-scores)[:top_k]
     results = []
     for i in idx:
-        c = chunks[int(i)]
+        c = CORPUS[int(i)]
         results.append({
             "text": c["text"],
             "source_url": c["source_url"],
@@ -54,11 +70,6 @@ def search(query_vector, top_k=5):
             "score": float(scores[int(i)]),
         })
     return results
-
-
-def _keywords(text):
-    words = re.findall(r"[a-z0-9]+", text.lower())
-    return set(w for w in words if w not in _STOPWORDS and len(w) > 2)
 
 
 def rerank(query, results, top_k=4):

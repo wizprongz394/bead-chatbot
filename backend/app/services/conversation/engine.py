@@ -27,6 +27,32 @@ COMPARE_FIELDS = [
     ("diameter_in", "Diameter"),
 ]
 
+# Attribute-specific words that indicate a technical question, not a
+# "tell me about X" product lookup. If the message contains one of these
+# AND an item number, route to Q&A instead of product card.
+ATTRIBUTE_QUESTION_PATTERNS = [
+    r"\b(temperature|temp|thermal|heat)\b",
+    r"\b(voltage|volt|v\b|v rating|rated voltage)\b",
+    r"\b(current|amp|amperage|a rating)\b",
+    r"\b(resistance|ohm|impedance)\b",
+    r"\b(datasheet|spec sheet|specification)\b",
+    r"\b(certif|rohs|reach|ul\b|mil-spec|mil spec)\b",
+    r"\b(plating|plated|gold|tin|nickel|silver)\b",
+    r"\b(weight|mass|gram)\b",
+    r"\b(mating cycles|durability|lifespan)\b",
+    r"\b(compatible|compatibility|mate[sd]?)\b",
+    r"\b(handle|support|withstand)\b",
+    r"\b(what is|what's|how much|how many|is it|does it|can it)\b.{0,40}\b(of|for|with|at)\b",
+]
+
+
+def _is_attribute_question(text):
+    t = text.lower()
+    for p in ATTRIBUTE_QUESTION_PATTERNS:
+        if re.search(p, t):
+            return True
+    return False
+
 
 def _format_product_cards(products):
     lines = []
@@ -63,8 +89,6 @@ def _find_product(item_number):
 
 
 def _relaxed_search(problem, limit=5):
-    """Relaxed search: drop only SECONDARY constraints. Never drop
-    product_family, pin_type, material, item_number, or dimensions."""
     import copy
     drop_order = ["application", "end_type", "mounting"]
 
@@ -77,7 +101,6 @@ def _relaxed_search(problem, limit=5):
     direct = try_search([])
     if direct:
         return direct
-
     for i in range(1, len(drop_order) + 1):
         results = try_search(drop_order[:i])
         if results:
@@ -222,9 +245,6 @@ def _is_context_switch(text):
     return any(re.search(p, t) for p in SWITCH_PATTERNS)
 
 
-# True explicit commands: "show me X", "find me X", "list X", "give me X",
-# "what pins", "what products". These should ALWAYS return results, not
-# ask clarifying questions.
 EXPLICIT_COMMAND_PATTERNS = [
     r"^\s*(show|find|list|give)\s+me\b",
     r"^\s*(show|find|list|give)\s+(all|the|any)\b",
@@ -282,9 +302,16 @@ def handle_turn(session_id, message):
 
     extract_into_state(text, state.active_problem)
 
+    # Product info lookup: only when the message is NOT asking about a specific
+    # attribute. Attribute questions route to Q&A.
     if intent in ("qa", "discover"):
         item_num = extract_item_number(text)
-        if item_num and re.search(r"\b(tell|show|about|what|describe|details?|specs?|for)\b", text.lower()):
+        wants_product_card = (
+            item_num
+            and re.search(r"\b(tell|show|about|describe|details?|specs?)\b", text.lower())
+            and not _is_attribute_question(text)
+        )
+        if wants_product_card:
             product = _find_product(item_num)
             if product:
                 save(state)
@@ -315,7 +342,8 @@ def handle_turn(session_id, message):
             [], actions=[{"type": "rfi_prefill"}],
             suggestions=["Request a sample", "What is Bead's lead time?"])
 
-    if intent == "qa":
+    # QA path: runs on either QA intent OR attribute questions with item numbers
+    if intent == "qa" or (extract_item_number(text) and _is_attribute_question(text)):
         try:
             from app.knowledge.embed import load_pretrained, embed_texts as _embed
             load_pretrained()
@@ -338,15 +366,12 @@ def handle_turn(session_id, message):
     if intent == "compare":
         return _handle_compare(state, text)
 
-    # Discovery: run product search if we have any constraints
     if _has_meaningful_constraints(state.active_problem):
         products = search_products(state.active_problem, limit=5)
         if products:
             save(state)
             heading = "I found " + str(len(products)) + " product(s) matching your requirements:"
             body = _format_product_cards(products)
-
-            # Only offer a follow-up question if this was NOT an explicit command
             tail = ""
             if not explicit_cmd:
                 next_q = select_next_question(state.active_problem, state.questions_asked)
@@ -376,8 +401,6 @@ def handle_turn(session_id, message):
                     "Request a quote for " + relaxed[0]["item_number"],
                 ])
 
-    # No constraints yet OR no products found.
-    # For explicit commands, don't ask questions - give a generic message.
     if explicit_cmd:
         return _response(state,
             "I couldn't find products matching that description in the Bead catalog. "
@@ -390,7 +413,6 @@ def handle_turn(session_id, message):
                 "Show me end-to-end pins",
             ])
 
-    # Default: ask the next clarifying question
     next_q = select_next_question(state.active_problem, state.questions_asked)
     if next_q:
         state.questions_asked.append(next_q["field"])

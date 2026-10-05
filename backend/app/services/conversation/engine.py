@@ -6,6 +6,7 @@ from app.services.conversation.state import get_or_create, save
 from app.services.conversation.intents import classify
 from app.services.conversation.constraints import (
     extract_into_state, extract_item_number, extract_product_family, extract_pin_type,
+    extract_application,
 )
 from app.services.conversation.questions import select_next_question, summary
 from app.services.retrieval.vector_store import search as vsearch, rerank
@@ -46,7 +47,7 @@ def _format_requirement_summary(problem):
 
 def _has_meaningful_constraints(problem):
     return any([
-        problem.material, problem.pin_type, problem.end_type,
+        problem.material, problem.pin_type, problem.end_type, problem.product_family,
         problem.item_number, problem.length_in_min, problem.length_in_max,
         problem.diameter_in_min, problem.diameter_in_max,
     ])
@@ -62,8 +63,15 @@ def _find_product(item_number):
 
 
 def _relaxed_search(problem, limit=5):
+    """
+    Relaxed search: drop only SECONDARY constraints (application, mounting,
+    end_type). Never drop product_family, pin_type, material, item_number,
+    or dimensional bounds - those are the primary ask.
+    """
     import copy
-    drop_order = ["application", "product_family", "mounting", "end_type", "pin_type"]
+
+    # Only these get dropped
+    drop_order = ["application", "end_type", "mounting"]
 
     def try_search(drop_fields):
         p = copy.copy(problem)
@@ -71,10 +79,17 @@ def _relaxed_search(problem, limit=5):
             setattr(p, field, None)
         return search_products(p, limit=limit)
 
+    # First, try the search with all fields intact
+    direct = try_search([])
+    if direct:
+        return direct
+
+    # Then progressively drop secondary fields
     for i in range(1, len(drop_order) + 1):
         results = try_search(drop_order[:i])
         if results:
             return results
+
     return []
 
 
@@ -215,7 +230,6 @@ def _is_context_switch(text):
     return any(re.search(p, t) for p in SWITCH_PATTERNS)
 
 
-# Patterns for detecting explicit discovery signals
 DISCOVERY_QUERY_PATTERNS = [
     r"^\s*(show|find|give|list)\s+me\b",
     r"^\s*what\s+(pins|products|parts)",
@@ -227,7 +241,6 @@ DISCOVERY_QUERY_PATTERNS = [
 
 
 def _is_explicit_discovery(text):
-    """True if the message looks like 'show me X' or 'tell me about X'."""
     t = text.lower()
     for p in DISCOVERY_QUERY_PATTERNS:
         if re.search(p, t):
@@ -236,10 +249,6 @@ def _is_explicit_discovery(text):
 
 
 def _family_conflicts_with_state(state, text):
-    """True if the new message names a family, pin-type, or application that
-    differs from the current state. Signals an implicit context switch."""
-    from app.services.conversation.constraints import extract_application
-
     new_family = extract_product_family(text)
     new_pin_type = extract_pin_type(text)
     new_application = extract_application(text)
@@ -266,7 +275,6 @@ def handle_turn(session_id, message):
     if not text:
         return _response(state, "I didn't catch that. Could you rephrase?", [])
 
-    # Context switch: explicit or implicit (new family/pin type differs from state)
     if _is_context_switch(text):
         if state.active_problem.known_fields():
             state.archive_and_reset("user initiated context switch")
@@ -277,14 +285,11 @@ def handle_turn(session_id, message):
     intent = classify(text)
     state.current_intent = intent
 
-    # Alternatives check (before generic discover)
     if intent == "discover" and re.search(r"\b(similar|alternatives?|like)\b", text.lower()):
         return _handle_alternatives(state, text)
 
     extract_into_state(text, state.active_problem)
 
-    # If the message contains a specific item number AND the user is asking about it,
-    # route to product lookup (not Q&A)
     if intent in ("qa", "discover"):
         item_num = extract_item_number(text)
         if item_num and re.search(r"\b(tell|show|about|what|describe|details?|specs?|for)\b", text.lower()):
@@ -374,8 +379,7 @@ def handle_turn(session_id, message):
         relaxed = _relaxed_search(state.active_problem, limit=5)
         if relaxed:
             save(state)
-            heading = ("No exact match with all constraints, but here are the closest "
-                       "products (with fewer filters applied):")
+            heading = ("I relaxed some filters to find these products:")
             return _response(state,
                 heading + "\n" + _format_product_cards(relaxed) + "\n\nYou can refine this or request an RFI.",
                 [],
@@ -413,4 +417,3 @@ def _response(state, reply, evidence, products=None, actions=None, suggestions=N
         "actions": actions or [],
         "suggestions": suggestions or [],
     }
-

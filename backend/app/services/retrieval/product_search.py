@@ -9,8 +9,20 @@ from app.config import DATA_DIR
 _NUM_RE = re.compile(r"(-?\d+(?:\.\d+)?)")
 
 
+# Map from product_family values used in state -> substrings found in source_url
+FAMILY_URL_PATTERNS = {
+    "hollow_pin": "hollow-contact-pins",
+    "solid_wire_pin": "solid-wire-pins",
+    "end_to_end_pin": "end-to-end-pins",
+    "pin_assembly": "pin-assemblies",
+    "square_end_to_end_pin": "square-end-to-end-pins",
+    "round_end_to_end_pin": "round-end-to-end-pins",
+    "square_wire_pin": "square-wire-pins",
+    "round_wire_pin": "round-wire-pins",
+}
+
+
 def _parse_inches(s):
-    """'0.330 in' -> 0.330 ; None -> None"""
     if s is None:
         return None
     if isinstance(s, (int, float)):
@@ -33,7 +45,6 @@ def _load_products():
 
 
 def _ci_match(value, target):
-    """Case-insensitive substring match."""
     if target is None:
         return True
     if value is None:
@@ -42,7 +53,6 @@ def _ci_match(value, target):
 
 
 def _range_match(value, lo, hi):
-    """value must be within [lo, hi]. None bounds ignored. Missing value fails."""
     if lo is None and hi is None:
         return True
     if value is None:
@@ -64,12 +74,18 @@ def _to_float(c):
         return None
 
 
+def _family_matches(product_url, family_value):
+    """Return True if the product's URL belongs to the requested family."""
+    if not family_value or not product_url:
+        return True
+    pattern = FAMILY_URL_PATTERNS.get(str(family_value))
+    if not pattern:
+        # Unknown family value - don't filter
+        return True
+    return pattern in product_url
+
+
 def search_products(problem, limit=10):
-    """
-    problem: ProblemState.
-    Returns list of matching products (public fields only), ordered by
-    match-score (descending) then item_number (ascending).
-    """
     products = _load_products()
     scored = []
 
@@ -81,6 +97,7 @@ def search_products(problem, limit=10):
     material = cv("material")
     pin_type = cv("pin_type")
     end_type = cv("end_type")
+    product_family = cv("product_family")
 
     length_lo = _to_float(getattr(problem, "length_in_min", None))
     length_hi = _to_float(getattr(problem, "length_in_max", None))
@@ -98,6 +115,8 @@ def search_products(problem, limit=10):
             continue
         if end_type and not _ci_match(p.get("end_type"), end_type):
             continue
+        if not _family_matches(p.get("source_url", ""), product_family):
+            continue
         if not _range_match(p.get("_length_num"), length_lo, length_hi):
             continue
         if not _range_match(p.get("_square_num"), square_lo, square_hi):
@@ -105,18 +124,17 @@ def search_products(problem, limit=10):
         if not _range_match(p.get("_diameter_num"), dia_lo, dia_hi):
             continue
 
-        # Score is computed locally and never stored on the returned dict
         score = sum([
             1 if item_number else 0,
             1 if material else 0,
             1 if pin_type else 0,
             1 if end_type else 0,
+            1 if product_family else 0,
             1 if (length_lo is not None or length_hi is not None) else 0,
             1 if (square_lo is not None or square_hi is not None) else 0,
             1 if (dia_lo is not None or dia_hi is not None) else 0,
         ])
 
-        # Strip internal fields from response
         p_clean = {k: v for k, v in p.items() if not k.startswith("_")}
         scored.append((score, p_clean))
 

@@ -236,22 +236,25 @@ def _is_explicit_discovery(text):
 
 
 def _family_conflicts_with_state(state, text):
-    """True if the new message names a family/pin-type that differs from state."""
+    """True if the new message names a family, pin-type, or application that
+    differs from the current state. Signals an implicit context switch."""
+    from app.services.conversation.constraints import extract_application
+
     new_family = extract_product_family(text)
     new_pin_type = extract_pin_type(text)
+    new_application = extract_application(text)
 
     cur_family = state.active_problem.product_family
     cur_pin_type = state.active_problem.pin_type
+    cur_application = state.active_problem.application
 
-    # If the new message specifies a product family and it differs from current state
     if new_family and cur_family and cur_family.value != new_family:
         return True
-    # If the new message specifies a pin type and it differs from current state
     if new_pin_type and cur_pin_type:
-        cur = str(cur_pin_type.value).lower()
-        new = str(new_pin_type).lower()
-        if cur != new:
+        if str(cur_pin_type.value).lower() != str(new_pin_type).lower():
             return True
+    if new_application and cur_application and cur_application.value != new_application:
+        return True
     return False
 
 
@@ -410,3 +413,4 @@ def _response(state, reply, evidence, products=None, actions=None, suggestions=N
         "actions": actions or [],
         "suggestions": suggestions or [],
     }
+

@@ -56,6 +56,34 @@ def _find_product(item_number):
     return None
 
 
+def _relaxed_search(problem, limit=5):
+    """
+    Try progressively looser searches by dropping constraints one at a time.
+    Used when the full search returns 0 results. Returns products if any
+    relaxed search yields results, else empty list.
+    """
+    import copy
+
+    # Order in which constraints are dropped (least important first).
+    # Never drop material, item_number, or dimension constraints - those
+    # are usually what the user actually cares about.
+    drop_order = ["application", "product_family", "mounting", "end_type", "pin_type"]
+
+    def try_search(drop_fields):
+        p = copy.copy(problem)
+        for field in drop_fields:
+            setattr(p, field, None)
+        return search_products(p, limit=limit)
+
+    for i in range(1, len(drop_order) + 1):
+        drop_fields = drop_order[:i]
+        results = try_search(drop_fields)
+        if results:
+            return results
+
+    return []
+
+
 # ---------- COMPARE ----------
 
 def _handle_compare(state, text):
@@ -157,8 +185,6 @@ def _handle_alternatives(state, text):
 
     catalog = _load_products()
 
-    # Weighted similarity. Family match is the strongest signal, so products
-    # from the same pin family will always rank above unrelated ones.
     def score(p):
         if p.get("item_number") == base.get("item_number"):
             return -1
@@ -183,7 +209,6 @@ def _handle_alternatives(state, text):
         p_clean = {k: v for k, v in p.items() if not k.startswith("_")}
         scored.append((s, p_clean))
 
-    # Sort by score descending, then item number ascending
     scored.sort(key=lambda sp: (-sp[0], sp[1].get("item_number", "")))
     top = [p for _, p in scored[:5]]
 
@@ -240,7 +265,6 @@ def handle_turn(session_id, message):
     if not text:
         return _response(state, "I didn't catch that. Could you rephrase?", [])
 
-    # Context switch: fires even in a fresh session (so "forget that" always works)
     if _is_context_switch(text):
         if state.active_problem.known_fields():
             state.archive_and_reset("user initiated context switch")
@@ -249,7 +273,6 @@ def handle_turn(session_id, message):
     intent = classify(text)
     state.current_intent = intent
 
-    # Alternatives (checked before generic discover)
     if intent == "discover" and re.search(r"\b(similar|alternatives?|like)\b", text.lower()):
         return _handle_alternatives(state, text)
 
@@ -324,6 +347,27 @@ def handle_turn(session_id, message):
             full = heading + "\n" + body + tail
             return _response(state, full, [], products=products, suggestions=product_suggestions)
 
+        # No exact match. Try relaxed search before giving up.
+        relaxed = _relaxed_search(state.active_problem, limit=5)
+        if relaxed:
+            save(state)
+            heading = (
+                "No exact match with all constraints, but here are the closest "
+                "products (with fewer filters applied):"
+            )
+            body = _format_product_cards(relaxed)
+            full = heading + "\n" + body + "\n\nYou can refine this or request an RFI."
+            return _response(
+                state,
+                full,
+                [],
+                products=relaxed,
+                suggestions=[
+                    "Show me alternatives to " + relaxed[0]["item_number"],
+                    "Request a quote for " + relaxed[0]["item_number"],
+                ],
+            )
+
     next_q = select_next_question(state.active_problem, state.questions_asked)
     if next_q:
         state.questions_asked.append(next_q["field"])
@@ -333,9 +377,8 @@ def handle_turn(session_id, message):
     save(state)
     return _response(
         state,
-        "I've captured these requirements but couldn't find an exact match.\n\n"
-        + _format_requirement_summary(state.active_problem)
-        + "\n\nI can route this to Bead's team for confirmation.",
+        "I've captured these requirements but couldn't find a match.\n\n"
+        + _format_requirement_summary(state.active_problem),
         [],
         actions=[{"type": "rfi_prefill"}],
     )
@@ -355,4 +398,3 @@ def _response(state, reply, evidence, products=None, actions=None, suggestions=N
         "actions": actions or [],
         "suggestions": suggestions or [],
     }
-

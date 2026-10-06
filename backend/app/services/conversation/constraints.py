@@ -15,21 +15,47 @@ def extract_item_number(text):
 
 
 def extract_product_family(text):
+    """
+    Map natural-language family mentions to canonical family keys.
+    Order matters: check the most specific patterns first.
+    """
     t = text.lower()
+
+    # Square variants (check "square X" before generic "X")
+    if "square end" in t or "square-end" in t or ("square" in t and "tandem" in t):
+        return "square_end_to_end_pin"
+    if "square wire" in t or "square-wire" in t:
+        return "square_wire_pin"
+
+    # Round variants
+    if "round end" in t or "round-end" in t or ("round" in t and "tandem" in t):
+        return "round_end_to_end_pin"
+    if "round wire" in t or "round-wire" in t:
+        return "round_wire_pin"
+
+    # Generic end-to-end (no shape specified)
     if "end to end" in t or "end-to-end" in t or "tandem" in t:
         return "end_to_end_pin"
+
+    # Solid wire
+    if "solid wire" in t or "solid-wire" in t:
+        return "solid_wire_pin"
+
+    # Hollow
     if "hollow" in t:
         return "hollow_pin"
-    if "solid wire" in t or "solid-wire" in t or ("solid" in t and "wire" in t):
-        return "solid_wire_pin"
-    if "pin assembly" in t or "pin assemblies" in t:
+
+    # Pin assembly
+    if "pin assembly" in t or "pin assemblies" in t or "assembly" in t and "pin" in t:
         return "pin_assembly"
+
     return None
 
 
 def extract_pin_type(text):
     t = text.lower()
-    for cand in ["square tandem", "round tandem", "square wire", "round wire", "square", "round", "hollow"]:
+    for cand in ["square tandem", "round tandem", "square wire", "round wire",
+                 "square end", "round end", "square", "round", "hollow"]:
         if cand in t:
             return cand.title()
     return None
@@ -40,7 +66,8 @@ def extract_application(text):
     for key, val in [("medical","medical"), ("automotive","automotive"), ("car","automotive"), ("vehicle","automotive"),
                      ("aerospace","aerospace"), ("defense","aerospace"), ("industrial","industrial"),
                      ("pcb","pcb"), ("board","pcb"), ("overmold","overmolded"),
-                     ("deutsch","deutsch_compatible"), ("connector","connector")]:
+                     ("deutsch","deutsch_compatible"), ("connector","connector"),
+                     ("hvac","hvac"), ("datacom","communication"), ("communication","communication")]:
         if key in t:
             return val
     return None
@@ -92,16 +119,13 @@ def extract_diameter_range(text):
 
 
 def extract_volume(text):
-    # Normalize commas so "10,000" becomes "10000"
     t = text.lower().replace(",", "")
-    # "10000 pieces" / "5000 pcs" / "200 units"
     m = re.search(r"\b(\d{2,})\s*(pieces|units|pcs|parts|ea|each)\b", t)
     if m:
         try:
             return int(m.group(1))
         except ValueError:
             return None
-    # Bare large number (heuristic: >= 100)
     m = re.search(r"\b(\d{3,})\b", t)
     if m:
         try:

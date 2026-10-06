@@ -110,13 +110,16 @@ def search_products(problem, limit=10):
         if material and not _ci_match(p.get("material"), material):
             continue
 
-        # pin_type filter: skip if product has no pin_type AND family filter is active
-        if pin_type:
+        # pin_type filter: skip if product_family is set. The user's
+        # natural-language pin_type descriptors (e.g. "Round Wire") rarely
+        # match the product data's pin_type values (e.g. "Round"), and the
+        # family filter already captures the same intent.
+        if pin_type and not family_active:
             product_pt = p.get("pin_type")
             if product_pt is not None:
                 if not _ci_match(product_pt, pin_type):
                     continue
-            elif not family_active:
+            else:
                 continue
 
         if end_type and not _ci_match(p.get("end_type"), end_type):
@@ -150,4 +153,3 @@ def search_products(problem, limit=10):
 
 def total_count():
     return len(_load_products())
-

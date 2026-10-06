@@ -150,3 +150,4 @@ def search_products(problem, limit=10):
 
 def total_count():
     return len(_load_products())
+

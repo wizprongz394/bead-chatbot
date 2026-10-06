@@ -1,13 +1,31 @@
+"""Configuration and paths.
+
+The .env file is loaded once at import time. Paths are defined but not
+created here — on Vercel the filesystem is read-only, so any mkdir
+call at import time crashes the function. Code that needs to write
+(only the ingestion pipeline) creates its own directories.
+"""
+import os
 from pathlib import Path
 from dotenv import load_dotenv
-load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+
+# Load .env relative to backend/ (works both locally and in containers)
+_ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
+if _ENV_PATH.exists():
+    load_dotenv(_ENV_PATH, override=False)
 
 APP_ROOT = Path(__file__).parent
 DATA_DIR = APP_ROOT / "data"
 RAW_DIR = DATA_DIR / "raw"
 
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-RAW_DIR.mkdir(parents=True, exist_ok=True)
+# Best-effort directory creation. On Vercel this will be a no-op.
+try:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    RAW_DIR.mkdir(parents=True, exist_ok=True)
+except OSError:
+    # Read-only filesystem (production). Directories already exist
+    # because they're bundled with the deployment.
+    pass
 
 USER_AGENT = "BeadChatbotBot/0.1 (+internal; respects robots.txt)"
 REQUEST_DELAY_SECONDS = 1.5

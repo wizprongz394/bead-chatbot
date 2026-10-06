@@ -9,44 +9,39 @@ def _num(s):
         return None
 
 
+# Item number pattern — used to strip item numbers from text before
+# volume extraction (so "W016-129" doesn't produce volume=129)
+_ITEM_NUMBER_RE = re.compile(r"\b[A-Z]\d{3}-\d{3,4}[A-Z]{0,3}\b")
+
+
 def extract_item_number(text):
-    m = re.search(r"\b([A-Z]\d{3}-\d{3,4}[A-Z]{0,3})\b", text.upper())
-    return m.group(1) if m else None
+    m = _ITEM_NUMBER_RE.search(text.upper())
+    return m.group(0) if m else None
 
 
 def extract_product_family(text):
-    """
-    Map natural-language family mentions to canonical family keys.
-    Order matters: check the most specific patterns first.
-    """
     t = text.lower()
 
-    # Square variants (check "square X" before generic "X")
     if "square end" in t or "square-end" in t or ("square" in t and "tandem" in t):
         return "square_end_to_end_pin"
     if "square wire" in t or "square-wire" in t:
         return "square_wire_pin"
 
-    # Round variants
     if "round end" in t or "round-end" in t or ("round" in t and "tandem" in t):
         return "round_end_to_end_pin"
     if "round wire" in t or "round-wire" in t:
         return "round_wire_pin"
 
-    # Generic end-to-end (no shape specified)
     if "end to end" in t or "end-to-end" in t or "tandem" in t:
         return "end_to_end_pin"
 
-    # Solid wire
     if "solid wire" in t or "solid-wire" in t:
         return "solid_wire_pin"
 
-    # Hollow
     if "hollow" in t:
         return "hollow_pin"
 
-    # Pin assembly
-    if "pin assembly" in t or "pin assemblies" in t or "assembly" in t and "pin" in t:
+    if "pin assembly" in t or "pin assemblies" in t or ("assembly" in t and "pin" in t):
         return "pin_assembly"
 
     return None
@@ -63,11 +58,14 @@ def extract_pin_type(text):
 
 def extract_application(text):
     t = text.lower()
-    for key, val in [("medical","medical"), ("automotive","automotive"), ("car","automotive"), ("vehicle","automotive"),
-                     ("aerospace","aerospace"), ("defense","aerospace"), ("industrial","industrial"),
-                     ("pcb","pcb"), ("board","pcb"), ("overmold","overmolded"),
-                     ("deutsch","deutsch_compatible"), ("connector","connector"),
-                     ("hvac","hvac"), ("datacom","communication"), ("communication","communication")]:
+    for key, val in [("medical", "medical"), ("automotive", "automotive"),
+                     ("car", "automotive"), ("vehicle", "automotive"),
+                     ("aerospace", "aerospace"), ("defense", "aerospace"),
+                     ("industrial", "industrial"),
+                     ("pcb", "pcb"), ("board", "pcb"), ("overmold", "overmolded"),
+                     ("deutsch", "deutsch_compatible"), ("connector", "connector"),
+                     ("hvac", "hvac"), ("datacom", "communication"),
+                     ("communication", "communication")]:
         if key in t:
             return val
     return None
@@ -119,21 +117,29 @@ def extract_diameter_range(text):
 
 
 def extract_volume(text):
-    t = text.lower().replace(",", "")
-    m = re.search(r"\b(\d{2,})\s*(pieces|units|pcs|parts|ea|each)\b", t)
+    # Strip item numbers first so their digits don't get misinterpreted
+    cleaned = _ITEM_NUMBER_RE.sub(" ", text.upper())
+    cleaned_lower = cleaned.lower().replace(",", "")
+
+    # Explicit volume with unit
+    m = re.search(r"\b(\d{2,})\s*(pieces|units|pcs|parts|ea|each)\b", cleaned_lower)
     if m:
         try:
             return int(m.group(1))
         except ValueError:
             return None
-    m = re.search(r"\b(\d{3,})\b", t)
-    if m:
-        try:
-            v = int(m.group(1))
-            if v >= 100:
-                return v
-        except ValueError:
-            return None
+
+    # Bare large number fallback — only if there's clear commercial intent
+    if any(word in cleaned_lower for word in ["need", "want", "order", "buy", "quote", "rfi", "rfq"]):
+        m = re.search(r"\b(\d{3,})\b", cleaned_lower)
+        if m:
+            try:
+                v = int(m.group(1))
+                if v >= 100:
+                    return v
+            except ValueError:
+                return None
+
     return None
 
 
